@@ -1,3 +1,5 @@
 **build**
 **pytabix.egg-info**
 **/__pycache__**
+.gitignore
+tabix.cpython*.so
