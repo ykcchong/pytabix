@@ -38,11 +38,10 @@ import tabix
 
 TEST_FILE = 'test/example.gtf.gz'
 
-
 def read_gtf(filename):
     """Read a GTF file and return a list of [chrom, start, end] items."""
     retval = []
-    for line in gzip.open(filename):
+    for line in gzip.open(filename, 'rt'):
         fields = line.rstrip().split('\t')
         chrom = fields[0]
         start = fields[3]
@@ -72,6 +71,14 @@ class TabixTest(unittest.TestCase):
     result = get_result(regions, chrom, start, end)
     tb = tabix.open(TEST_FILE)
 
+    @classmethod
+    def setUpClass(cls):
+        """Set up test files including VCF file with headers"""
+        try:
+            cls.tb_with_headers = tabix.open('test/test_header.vcf.gz')
+        except:
+            cls.tb_with_headers = None
+
     def test_query(self):
         it = self.tb.query(self.chrom, self.start, self.end)
         tb_result = [ [x[0], x[3], x[4]] for x in it ]
@@ -92,6 +99,60 @@ class TabixTest(unittest.TestCase):
         file1 = "ftp://badurl"
         with self.assertRaises(tabix.TabixError):
             tabix.open(file1)
+
+    def test_header_no_headers(self):
+        """Test header function with GTF file that has no header lines"""
+        with self.assertRaises(tabix.TabixError):
+            self.tb.header()
+        
+        # Test multiple calls to ensure no resource leaks
+        with self.assertRaises(tabix.TabixError):
+            self.tb.header()
+        
+        with self.assertRaises(tabix.TabixError):
+            self.tb.header()
+
+    def test_header_with_headers(self):
+        """Test header function with VCF file that has header lines"""
+        if self.tb_with_headers is None:
+            self.skipTest("VCF test file not available")
+        
+        # Test single call
+        header = self.tb_with_headers.header()
+        self.assertIn('##fileformat=VCFv4.2', header)
+        self.assertIn('#CHROM', header)
+        self.assertNotIn('chr1\t1000', header)  # Should not contain data lines
+        
+        # Test multiple calls return identical results
+        headers = []
+        for i in range(5):
+            h = self.tb_with_headers.header()
+            headers.append(h)
+        
+        # All headers should be identical
+        for h in headers[1:]:
+            self.assertEqual(headers[0], h)
+
+    def test_header_query_interaction(self):
+        """Test that header calls don't interfere with query operations"""
+        if self.tb_with_headers is None:
+            self.skipTest("VCF test file not available")
+        
+        # Get header first
+        header1 = self.tb_with_headers.header()
+        
+        # Perform a query
+        records = list(self.tb_with_headers.query('chr1', 500, 1500))
+        self.assertGreater(len(records), 0)  # Should find at least one record
+        
+        # Get header again - should be unchanged
+        header2 = self.tb_with_headers.header()
+        self.assertEqual(header1, header2)
+        
+        # Another query and header check
+        records2 = list(self.tb_with_headers.query('chr1', 1800, 2200))
+        header3 = self.tb_with_headers.header()
+        self.assertEqual(header1, header3)
 
 
 if __name__ == '__main__':

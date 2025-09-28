@@ -277,6 +277,71 @@ tabix_querys(TabixObject *self, PyObject *args)
     return tabixiter_create(self, result);
 }
 
+static PyObject * 
+tabix_header(TabixObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, ":header"))
+        return NULL;
+
+    ti_iter_t iter;
+    const char *s; 
+    int len; 
+    char *header = NULL; 
+    
+    char meta_header_char = '#'; 
+
+    // Seek to the beginning of the file to ensure we read from the start every time
+    if (bgzf_seek(self->tb->fp, 0, SEEK_SET) < 0) {
+        PyErr_SetString(TabixError, "failed to seek to beginning of file");
+        return NULL;
+    }
+
+    iter = ti_query(self->tb, 0, 0, 0); 
+    if (iter == NULL) {
+        PyErr_SetString(TabixError, "failed to create iterator for header retrieval");
+        return NULL;
+    }
+    
+    while ((s = ti_read(self->tb, iter, &len)) != 0) {
+        if (s[0] != meta_header_char) break; 
+        if (header == NULL) {
+            header = strdup(s);
+            if (header == NULL) {
+                ti_iter_destroy(iter);
+                return PyErr_NoMemory();
+            }
+        } else {
+            char *new_header = malloc(strlen(header) + len + 1);
+            if (new_header == NULL) {
+                free(header);
+                ti_iter_destroy(iter);
+                return PyErr_NoMemory();
+            }
+            strcpy(new_header, header);
+            strcat(new_header, s);
+            free(header);
+            header = new_header;
+        }
+    }
+
+    // Always destroy the iterator
+    ti_iter_destroy(iter);
+
+    if (header == NULL) {
+        PyErr_SetString(TabixError, "no header lines found");
+        return NULL;
+    }
+
+    // Use strlen(header) for correct length instead of len (which is length of last line)
+    size_t header_len = strlen(header);
+    PyObject *result = PYOBJECT_FROM_STRING_AND_SIZE(header, (Py_ssize_t)header_len);
+    
+    // Free the allocated header memory
+    free(header);
+    
+    return result;
+}
+
 static PyObject *
 tabix_repr(TabixObject *self)
 {
@@ -332,7 +397,6 @@ static PyMethodDef tabix_methods[] = {
                   "region : str\n"
                   "    Query string like \"seq:start-end\".\n")
     },
-    /*
     {
         "header",
         (PyCFunction)tabix_header,
@@ -340,7 +404,6 @@ static PyMethodDef tabix_methods[] = {
         PyDoc_STR("Get the header for a file (VCF, SAM, GTF, etc.).\n\n"
                   "    >>> tb.header()\n")
     },
-    */
     {NULL, NULL}           /* sentinel */
 };
 /*
